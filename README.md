@@ -151,7 +151,7 @@ All client software has support for [internationalization](docs/translations.md)
 | Hindi |   |   | &check; |   |
 | Italian |   | &check; | &check; | &check; |
 | Korean |   | &check; | &check; |   |
-| Portuguese | &check; |   | &check; |   |
+| Portuguese | &check; | &check; | &check; |   |
 | Romanian |   | &check; | &check; |   |
 | Russian | &check; | &check; | &check; | &check; |
 | Spanish | &check; | &check; | &check; | &check; |
