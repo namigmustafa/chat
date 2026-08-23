@@ -206,6 +206,9 @@ var globals struct {
 	// URL of the main endpoint.
 	// TODO: implement file-serving API for gRPC and remove this feature.
 	servingAt string
+
+	// Indicator if link preview generator is enabled.
+	linkPreviewEnabled bool
 }
 
 // Credential validator config.
@@ -747,6 +750,11 @@ func main() {
 		// Serve large files.
 		mux.Handle(config.ApiPath+"v0/file/s/", gh.CompressHandler(http.HandlerFunc(largeFileServe)))
 		logs.Info.Println("Large media handling enabled", config.Media.UseHandler)
+	}
+
+	if config.LinkPreviewEnabled {
+		globals.linkPreviewEnabled = true
+		mux.HandleFunc(config.ApiPath+"v0/urlpreview", previewLink)
 	}
 
 	if staticMountPoint != "/" {
