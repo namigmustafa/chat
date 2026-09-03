@@ -5,11 +5,12 @@
 // "apns-push-type: voip" push (confirmed via Firebase's own open feature
 // request "FCM support for VoIP push", unresolved since 2023) — see the FIXME
 // comment in ../fcm/payload.go. A locked or killed iOS app can only be woken
-// to show a CallKit incoming-call UI by a real VoIP push, so this adapter
-// handles ONLY call-start events for iOS devices that have registered a VoIP
-// token (types.DeviceDef.VoipToken). Every other push (regular alerts,
-// Android, web, and the FCM fallback alert for call-start too) is untouched
-// and keeps going through the existing fcm adapter.
+// to show (or dismiss) a CallKit incoming-call UI by a real VoIP push, so this
+// adapter handles call-start AND the terminal call states (accepted/busy/
+// missed/declined/disconnected - see voipRelevantStates) for iOS devices that
+// have registered a VoIP token (types.DeviceDef.VoipToken). Every other push
+// (regular alerts, Android, web, and the FCM fallback alert for these same
+// events too) is untouched and keeps going through the existing fcm adapter.
 package apns
 
 import (
@@ -126,11 +127,24 @@ func (Handler) Init(jsonconf json.RawMessage) (bool, error) {
 	return true, nil
 }
 
-// sendVoipPushes filters a receipt down to iOS devices with a registered VoIP
-// token, but only for a call-start event - everything else is left for the
-// fcm adapter to handle as it already does today.
+// voipRelevantStates are the webrtc states the iOS client's
+// didReceiveIncomingPushWith(...) actually understands (see
+// Tinodios/AppDelegate.swift's switch on callState) - "started" shows the
+// CallKit incoming-call UI, the rest tell it to dismiss an already-shown one.
+// A regular FCM push can't reach a locked/killed app, so a terminal state
+// (e.g. the caller cancelling before answer) needs a real VoIP push too, or
+// the CallKit UI is left showing a call that no longer exists.
+var voipRelevantStates = map[string]bool{
+	"started":      true,
+	"accepted":     true,
+	"busy":         true,
+	"missed":       true,
+	"declined":     true,
+	"disconnected": true,
+}
+
 func sendVoipPushes(rcpt *push.Receipt) {
-	if rcpt.Payload.Webrtc != "started" {
+	if !voipRelevantStates[rcpt.Payload.Webrtc] {
 		return
 	}
 
@@ -148,7 +162,7 @@ func sendVoipPushes(rcpt *push.Receipt) {
 		return
 	}
 	if count == 0 {
-		logs.Info.Println("apns: call-start push, but no devices found for", uids)
+		logs.Info.Println("apns: voip-relevant push, but no devices found for", uids)
 		return
 	}
 
@@ -164,7 +178,7 @@ func sendVoipPushes(rcpt *push.Receipt) {
 		}
 	}
 	if sent == 0 {
-		logs.Info.Println("apns: call-start push, but no eligible iOS+voiptoken device among", count, "device(s)")
+		logs.Info.Println("apns: voip-relevant push, but no eligible iOS+voiptoken device among", count, "device(s)")
 	}
 }
 
@@ -182,6 +196,12 @@ func sendOne(uid t.Uid, d *t.DeviceDef, pl *push.Payload) {
 	}
 	if pl.AudioOnly {
 		data["aonly"] = true
+	}
+	if pl.Replace != "" {
+		// Terminal states (accepted/busy/missed/declined/disconnected) carry the
+		// original call's seq here - the client's dismiss path keys off it to
+		// find and end the CallKit call it's currently showing.
+		data["replace"] = pl.Replace
 	}
 
 	body, err := json.Marshal(map[string]any{
