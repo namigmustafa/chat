@@ -25,3 +25,9 @@ RUN go build -tags postgres -o /out/init-db ./tinode-db
 FROM docker.io/tinode/tinode-postgres:latest
 COPY --from=build /out/tinode /opt/tinode/tinode
 COPY --from=build /out/init-db /opt/tinode/init-db
+# Upstream's entrypoint.sh redirects the server's stderr to a file inside the
+# container, which hid every startup crash from "az containerapp logs" / Log
+# Analytics. This copy only changes that one line (stderr goes to the
+# container's normal stderr stream instead) - see the CUSTOMIZED comment in it.
+COPY docker/tinode-custom/entrypoint.sh /opt/tinode/entrypoint.sh
+RUN chmod +x /opt/tinode/entrypoint.sh
