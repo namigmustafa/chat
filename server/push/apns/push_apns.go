@@ -170,7 +170,7 @@ func sendVoipPushes(rcpt *push.Receipt) {
 	for uid, devList := range devices {
 		for i := range devList {
 			d := &devList[i]
-			logs.Info.Println("apns: candidate device", d.DeviceId, "platform", d.Platform, "hasVoipToken", d.VoipToken != "")
+			logs.Info.Println("apns: candidate device", d.DeviceId, "state", rcpt.Payload.Webrtc, "platform", d.Platform, "hasVoipToken", d.VoipToken != "")
 			if d.Platform == "ios" && d.VoipToken != "" {
 				sent++
 				sendOne(uid, d, &rcpt.Payload)
@@ -222,7 +222,7 @@ func sendOne(uid t.Uid, d *t.DeviceDef, pl *push.Payload) {
 		Payload:     body,
 	}
 
-	logs.Info.Println("apns: sending voip push to device", d.DeviceId, "topic", handler.topic)
+	logs.Info.Println("apns: sending voip push, state", pl.Webrtc, "replace", pl.Replace, "to device", d.DeviceId, "topic", handler.topic)
 	res, err := handler.client.Push(notification)
 	if err != nil {
 		logs.Warn.Println("apns: voip push transport error:", err)
