@@ -2968,7 +2968,10 @@ func (a *adapter) DeviceGetAll(uids ...t.Uid) (map[t.Uid][]t.DeviceDef, int, err
 		unums = append(unums, store.DecodeUid(uid))
 	}
 
-	query, unums := expandQuery("SELECT userid,deviceid,voiptoken,platform,lastseen,lang FROM devices WHERE userid IN (?)", unums)
+	// COALESCE handles pre-existing rows from before the voiptoken column was added
+	// (ALTER TABLE ADD COLUMN leaves existing rows NULL there), which otherwise fail
+	// to scan into a non-nullable string and break device lookups for ALL push types.
+	query, unums := expandQuery("SELECT userid,deviceid,COALESCE(voiptoken,''),platform,lastseen,lang FROM devices WHERE userid IN (?)", unums)
 	ctx, cancel := a.getContext()
 	if cancel != nil {
 		defer cancel()

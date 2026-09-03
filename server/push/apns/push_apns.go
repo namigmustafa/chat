@@ -148,16 +148,23 @@ func sendVoipPushes(rcpt *push.Receipt) {
 		return
 	}
 	if count == 0 {
+		logs.Info.Println("apns: call-start push, but no devices found for", uids)
 		return
 	}
 
+	sent := 0
 	for uid, devList := range devices {
 		for i := range devList {
 			d := &devList[i]
+			logs.Info.Println("apns: candidate device", d.DeviceId, "platform", d.Platform, "hasVoipToken", d.VoipToken != "")
 			if d.Platform == "ios" && d.VoipToken != "" {
+				sent++
 				sendOne(uid, d, &rcpt.Payload)
 			}
 		}
+	}
+	if sent == 0 {
+		logs.Info.Println("apns: call-start push, but no eligible iOS+voiptoken device among", count, "device(s)")
 	}
 }
 
@@ -195,12 +202,14 @@ func sendOne(uid t.Uid, d *t.DeviceDef, pl *push.Payload) {
 		Payload:     body,
 	}
 
+	logs.Info.Println("apns: sending voip push to device", d.DeviceId, "topic", handler.topic)
 	res, err := handler.client.Push(notification)
 	if err != nil {
 		logs.Warn.Println("apns: voip push transport error:", err)
 		return
 	}
 	if res.Sent() {
+		logs.Info.Println("apns: voip push sent OK, apns-id", res.ApnsID)
 		return
 	}
 
