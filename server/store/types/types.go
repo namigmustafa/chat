@@ -1402,6 +1402,10 @@ func IsEphemeralTopic(topic string) bool {
 type DeviceDef struct {
 	// Device registration ID
 	DeviceId string
+	// PushKit VoIP push token (iOS only). Delivered via direct APNs voip push,
+	// not FCM. Empty when the device has no VoIP-capable client or hasn't
+	// registered one.
+	VoipToken string
 	// Device platform (iOS, Android, Web)
 	Platform string
 	// Last logged in

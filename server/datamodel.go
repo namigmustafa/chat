@@ -118,6 +118,10 @@ type MsgClientHi struct {
 	Version string `json:"ver,omitempty"`
 	// Client's unique device ID
 	DeviceID string `json:"dev,omitempty"`
+	// Client's PushKit VoIP push token (iOS only), used for waking the app from a
+	// locked/killed state to show a CallKit incoming-call UI. Separate from DeviceID
+	// because it must be delivered via a real APNs VoIP push, not FCM.
+	VoipDeviceID string `json:"voipdev,omitempty"`
 	// ISO 639-1 human language of the connected device
 	Lang string `json:"lang,omitempty"`
 	// Platform code: ios, android, web.

@@ -319,8 +319,12 @@ func apnsNotificationConfig(what, topic string, data map[string]string, unread i
 		interruptionLevel = common.InterruptionLevelCritical
 		// FIXME: PushKit notifications do not work with the current FCM adapter.
 		// Using normal pushes as a poor-man's replacement for VOIP pushes.
-		// Uncomment the following two lines when FCM fixes its problem or when we switch to
-		// a different adapter.
+		// Confirmed 2026-09-03: this is a documented FCM limitation, not a stale
+		// comment — Firebase does not support relaying real apns-push-type: voip
+		// (see firebase.uservoice.com "FCM support for VoIP push", unresolved since
+		// 2023). Real VoIP delivery for iOS needs a direct APNs HTTP/2 connection
+		// instead of going through this FCM adapter; see tinode-ecosystem's
+		// lock-screen-incoming-call plan.
 		// pushType = common.ApnsPushTypeVoip
 		// bundleId += ".voip"
 		expires = time.Now().UTC().Add(time.Duration(voipTimeToLive) * time.Second)

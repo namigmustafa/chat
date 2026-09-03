@@ -47,7 +47,7 @@ type adapter struct {
 }
 
 const (
-	adpVersion  = 116
+	adpVersion  = 117
 	adapterName = "postgres"
 
 	defaultMaxResults = 1024
@@ -384,13 +384,14 @@ func (a *adapter) CreateDb(reset bool) error {
 	// Indexed devices. Normalized into a separate table.
 	if _, err = tx.Exec(ctx,
 		`CREATE TABLE devices(
-			id       SERIAL NOT NULL,
-			userid   BIGINT NOT NULL,
-			hash     CHAR(16) NOT NULL,
-			deviceid TEXT NOT NULL,
-			platform VARCHAR(32),
-			lastseen TIMESTAMP NOT NULL,
-			lang     VARCHAR(8),
+			id        SERIAL NOT NULL,
+			userid    BIGINT NOT NULL,
+			hash      CHAR(16) NOT NULL,
+			deviceid  TEXT NOT NULL,
+			voiptoken TEXT,
+			platform  VARCHAR(32),
+			lastseen  TIMESTAMP NOT NULL,
+			lang      VARCHAR(8),
 			PRIMARY KEY(id),
 			FOREIGN KEY(userid) REFERENCES users(id)
 		);
@@ -696,6 +697,20 @@ func (a *adapter) UpgradeDb() error {
 		}
 
 		if err := bumpVersion(a, 116); err != nil {
+			return err
+		}
+	}
+
+	if a.version == 116 {
+		// Perform database upgrade from version 116 to version 117.
+
+		// VoIP push token (iOS PushKit), stored alongside the regular device push
+		// token so a call-start push can be sent via direct APNs voip delivery.
+		if _, err := a.db.Exec(ctx, "ALTER TABLE devices ADD COLUMN voiptoken TEXT"); err != nil {
+			return err
+		}
+
+		if err := bumpVersion(a, 117); err != nil {
 			return err
 		}
 	}
@@ -2938,8 +2953,8 @@ func (a *adapter) DeviceUpsert(uid t.Uid, def *t.DeviceDef) error {
 	}
 
 	// Actually add/update DeviceId for the new user
-	_, err = tx.Exec(ctx, "INSERT INTO devices(userid, hash, deviceId, platform, lastseen, lang) VALUES($1,$2,$3,$4,$5,$6)",
-		store.DecodeUid(uid), hash, def.DeviceId, def.Platform, def.LastSeen, def.Lang)
+	_, err = tx.Exec(ctx, "INSERT INTO devices(userid, hash, deviceId, voiptoken, platform, lastseen, lang) VALUES($1,$2,$3,$4,$5,$6,$7)",
+		store.DecodeUid(uid), hash, def.DeviceId, def.VoipToken, def.Platform, def.LastSeen, def.Lang)
 	if err != nil {
 		return err
 	}
@@ -2953,7 +2968,7 @@ func (a *adapter) DeviceGetAll(uids ...t.Uid) (map[t.Uid][]t.DeviceDef, int, err
 		unums = append(unums, store.DecodeUid(uid))
 	}
 
-	query, unums := expandQuery("SELECT userid,deviceid,platform,lastseen,lang FROM devices WHERE userid IN (?)", unums)
+	query, unums := expandQuery("SELECT userid,deviceid,voiptoken,platform,lastseen,lang FROM devices WHERE userid IN (?)", unums)
 	ctx, cancel := a.getContext()
 	if cancel != nil {
 		defer cancel()
@@ -2965,26 +2980,28 @@ func (a *adapter) DeviceGetAll(uids ...t.Uid) (map[t.Uid][]t.DeviceDef, int, err
 	defer rows.Close()
 
 	var device struct {
-		Userid   int64
-		Deviceid string
-		Platform string
-		Lastseen time.Time
-		Lang     string
+		Userid    int64
+		Deviceid  string
+		Voiptoken string
+		Platform  string
+		Lastseen  time.Time
+		Lang      string
 	}
 
 	result := make(map[t.Uid][]t.DeviceDef)
 	count := 0
 	for rows.Next() {
-		if err = rows.Scan(&device.Userid, &device.Deviceid, &device.Platform, &device.Lastseen, &device.Lang); err != nil {
+		if err = rows.Scan(&device.Userid, &device.Deviceid, &device.Voiptoken, &device.Platform, &device.Lastseen, &device.Lang); err != nil {
 			break
 		}
 		uid := store.EncodeUid(device.Userid)
 		udev := result[uid]
 		udev = append(udev, t.DeviceDef{
-			DeviceId: device.Deviceid,
-			Platform: device.Platform,
-			LastSeen: device.Lastseen,
-			Lang:     device.Lang,
+			DeviceId:  device.Deviceid,
+			VoipToken: device.Voiptoken,
+			Platform:  device.Platform,
+			LastSeen:  device.Lastseen,
+			Lang:      device.Lang,
 		})
 		result[uid] = udev
 		count++

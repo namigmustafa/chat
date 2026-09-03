@@ -93,6 +93,8 @@ type Session struct {
 
 	// Device ID of the client
 	deviceID string
+	// PushKit VoIP push token of the client (iOS only)
+	voipDeviceID string
 	// Platform: web, ios, android
 	platf string
 	// Human language of the client
@@ -739,6 +741,7 @@ func (s *Session) publish(msg *ClientComMessage) {
 func (s *Session) hello(msg *ClientComMessage) {
 	var params map[string]any
 	var deviceIDUpdate bool
+	isFirstHello := s.ver == 0
 
 	if s.ver == 0 {
 		s.ver = parseVersion(msg.Hi.Version)
@@ -798,8 +801,9 @@ func (s *Session) hello(msg *ClientComMessage) {
 			s.bkgTimer.Reset(deferredNotificationsTimeout)
 		}
 	} else if msg.Hi.Version == "" || parseVersion(msg.Hi.Version) == s.ver {
-		// Save changed device ID+Lang or delete earlier specified device ID.
-		// Platform cannot be changed.
+		// Save changed device ID / VoIP token / Lang, or delete earlier specified
+		// device ID. Deleting the device ID also drops any associated VoIP token,
+		// since both live on the same device record. Platform cannot be changed.
 		if !s.uid.IsZero() {
 			var err error
 			if msg.Hi.DeviceID == types.NullValue {
@@ -808,16 +812,46 @@ func (s *Session) hello(msg *ClientComMessage) {
 				if s.deviceID != "" {
 					err = store.Devices.Delete(s.uid, s.deviceID)
 				}
-			} else if msg.Hi.DeviceID != "" && s.deviceID != msg.Hi.DeviceID {
-				deviceIDUpdate = true
-				err = store.Devices.Update(s.uid, s.deviceID, &types.DeviceDef{
-					DeviceId: msg.Hi.DeviceID,
-					Platform: s.platf,
-					LastSeen: msg.Timestamp,
-					Lang:     msg.Hi.Lang,
-				})
+				s.voipDeviceID = ""
+			} else {
+				// Either field may arrive on its own: a standalone
+				// setDeviceToken/setVoipToken call from the client only carries
+				// the one field that changed, leaving the other at its zero value,
+				// so each must be checked independently rather than assuming both
+				// are always present together.
+				deviceChanged := msg.Hi.DeviceID != "" && s.deviceID != msg.Hi.DeviceID
+				voipCleared := msg.Hi.VoipDeviceID == types.NullValue
+				voipChanged := !voipCleared && msg.Hi.VoipDeviceID != "" && s.voipDeviceID != msg.Hi.VoipDeviceID
 
-				userChannelsSubUnsub(s.uid, msg.Hi.DeviceID, true)
+				if deviceChanged || voipChanged || voipCleared {
+					newDeviceID := s.deviceID
+					if msg.Hi.DeviceID != "" {
+						newDeviceID = msg.Hi.DeviceID
+					}
+					newVoipID := s.voipDeviceID
+					if voipCleared {
+						newVoipID = ""
+					} else if msg.Hi.VoipDeviceID != "" {
+						newVoipID = msg.Hi.VoipDeviceID
+					}
+
+					if newDeviceID != "" {
+						deviceIDUpdate = true
+						err = store.Devices.Update(s.uid, s.deviceID, &types.DeviceDef{
+							DeviceId:  newDeviceID,
+							VoipToken: newVoipID,
+							Platform:  s.platf,
+							LastSeen:  msg.Timestamp,
+							Lang:      msg.Hi.Lang,
+						})
+
+						if deviceChanged {
+							userChannelsSubUnsub(s.uid, newDeviceID, true)
+						}
+					}
+					s.deviceID = newDeviceID
+					s.voipDeviceID = newVoipID
+				}
 			}
 
 			if err != nil {
@@ -840,10 +874,20 @@ func (s *Session) hello(msg *ClientComMessage) {
 		return
 	}
 
-	if msg.Hi.DeviceID == types.NullValue {
-		msg.Hi.DeviceID = ""
+	if isFirstHello {
+		// The very first {hi} on a session establishes initial device/VoIP token
+		// state ahead of authentication; it's persisted once login succeeds (see
+		// store.Devices.Update call in the login handler below). Subsequent {hi}s
+		// on an authenticated session are handled field-by-field above.
+		if msg.Hi.DeviceID == types.NullValue {
+			msg.Hi.DeviceID = ""
+		}
+		s.deviceID = msg.Hi.DeviceID
+		if msg.Hi.VoipDeviceID == types.NullValue {
+			msg.Hi.VoipDeviceID = ""
+		}
+		s.voipDeviceID = msg.Hi.VoipDeviceID
 	}
-	s.deviceID = msg.Hi.DeviceID
 	s.lang = msg.Hi.Lang
 	// Try to deduce the country from the locale.
 	// Tag may be well-defined even if err != nil. For example, for 'zh_CN_#Hans'
@@ -1088,10 +1132,11 @@ func (s *Session) onLogin(msgID string, timestamp time.Time, rec *auth.Rec, miss
 		// Record deviceId used in this session
 		if s.deviceID != "" {
 			if err := store.Devices.Update(rec.Uid, "", &types.DeviceDef{
-				DeviceId: s.deviceID,
-				Platform: s.platf,
-				LastSeen: timestamp,
-				Lang:     s.lang,
+				DeviceId:  s.deviceID,
+				VoipToken: s.voipDeviceID,
+				Platform:  s.platf,
+				LastSeen:  timestamp,
+				Lang:      s.lang,
 			}); err != nil {
 				logs.Warn.Println("failed to update device record", err)
 			}
