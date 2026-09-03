@@ -833,6 +833,19 @@ func (s *Session) hello(msg *ClientComMessage) {
 						newVoipID = ""
 					} else if msg.Hi.VoipDeviceID != "" {
 						newVoipID = msg.Hi.VoipDeviceID
+					} else if newVoipID == "" && deviceChanged {
+						// Defense in depth: if this session's own in-memory VoIP
+						// token is empty but the device row already has one stored
+						// (e.g. registered by an earlier session), don't let a plain
+						// device-ID change (FCM token rotation) wipe it out.
+						if existing, _, err := store.Devices.GetAll(s.uid); err == nil {
+							for _, d := range existing[s.uid] {
+								if d.DeviceId == s.deviceID {
+									newVoipID = d.VoipToken
+									break
+								}
+							}
+						}
 					}
 
 					if newDeviceID != "" {
@@ -1131,15 +1144,35 @@ func (s *Session) onLogin(msgID string, timestamp time.Time, rec *auth.Rec, miss
 
 		// Record deviceId used in this session
 		if s.deviceID != "" {
+			voipToken := s.voipDeviceID
+			if voipToken == "" {
+				// This session's own {hi} never carried a VoIP token (e.g. it
+				// logged in before PushKit had handed the app one yet). Devices.Update
+				// replaces the whole row, so blindly writing s.voipDeviceID here would
+				// wipe out a VoIP token a previous session already registered for the
+				// same device. Preserve whatever is already stored instead.
+				if existing, _, err := store.Devices.GetAll(rec.Uid); err == nil {
+					for _, d := range existing[rec.Uid] {
+						if d.DeviceId == s.deviceID {
+							voipToken = d.VoipToken
+							break
+						}
+					}
+				}
+			}
 			if err := store.Devices.Update(rec.Uid, "", &types.DeviceDef{
 				DeviceId:  s.deviceID,
-				VoipToken: s.voipDeviceID,
+				VoipToken: voipToken,
 				Platform:  s.platf,
 				LastSeen:  timestamp,
 				Lang:      s.lang,
 			}); err != nil {
 				logs.Warn.Println("failed to update device record", err)
 			}
+			// Keep in-memory session state consistent with what's now in the DB,
+			// so a later device-ID change in this same session (e.g. FCM token
+			// rotation) doesn't wipe the just-preserved VoIP token back out.
+			s.voipDeviceID = voipToken
 		}
 	}
 
